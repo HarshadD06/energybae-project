@@ -1,39 +1,33 @@
 import streamlit as st
 import pdfplumber
-from PIL import Image
-import pytesseract
-import os
 import re
+import os
 from openpyxl import load_workbook
 
 # =========================================
-# TESSERACT SETTINGS
+# PAGE SETTINGS
 # =========================================
 
-# Windows Local System Support
-if os.name == "nt":
-
-    pytesseract.pytesseract.tesseract_cmd = (
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-    )
-
-    os.environ["TESSDATA_PREFIX"] = (
-        r"C:\Program Files\Tesseract-OCR\tessdata"
-    )
+st.set_page_config(
+    page_title="Electricity Bill Automation",
+    page_icon="⚡",
+    layout="centered"
+)
 
 # =========================================
 # APP TITLE
 # =========================================
 
 st.title("⚡ Electricity Bill Automation")
+st.write("Upload Electricity Bill PDF and Generate Excel Automatically")
 
 # =========================================
 # FILE UPLOAD
 # =========================================
 
 uploaded_file = st.file_uploader(
-    "Upload Electricity Bill",
-    type=["pdf", "png", "jpg", "jpeg"]
+    "Upload Electricity Bill PDF",
+    type=["pdf"]
 )
 
 # =========================================
@@ -44,26 +38,38 @@ def extract_text_from_pdf(pdf_file):
 
     text = ""
 
-    with pdfplumber.open(pdf_file) as pdf:
+    try:
 
-        for page in pdf.pages:
+        st.info("📄 Reading PDF...")
 
-            extracted = page.extract_text()
+        with pdfplumber.open(pdf_file) as pdf:
 
-            if extracted:
-                text += extracted
+            total_pages = len(pdf.pages)
 
-    return text
+            st.write(f"Total Pages Found: {total_pages}")
 
-# =========================================
-# IMAGE OCR EXTRACTION
-# =========================================
+            # Process only first 3 pages
+            # Faster for Render free tier
 
-def extract_text_from_image(image_file):
+            max_pages = min(total_pages, 3)
 
-    image = Image.open(image_file)
+            for i in range(max_pages):
 
-    text = pytesseract.image_to_string(image)
+                st.write(f"Processing Page {i+1}...")
+
+                page = pdf.pages[i]
+
+                extracted = page.extract_text()
+
+                if extracted:
+
+                    text += extracted + "\n"
+
+        st.success("✅ PDF Reading Completed")
+
+    except Exception as e:
+
+        st.error(f"PDF Reading Error: {e}")
 
     return text
 
@@ -73,39 +79,108 @@ def extract_text_from_image(image_file):
 
 def extract_bill_data(text):
 
-    data = {}
+    data = {
+        "consumer_number": "0",
+        "bill_amount": "0",
+        "units_consumed": "0",
+        "sanctioned_load": "0"
+    }
 
-    # Consumer Number
-    consumer_match = re.search(r'(\d{12})', text)
+    # =====================================
+    # CONSUMER NUMBER
+    # =====================================
 
-    if consumer_match:
-        data["consumer_number"] = consumer_match.group(1)
-    else:
-        data["consumer_number"] = "0"
+    consumer_patterns = [
 
-    # Bill Amount
-    amount_match = re.search(r'Rs[,.\s]*([0-9,]+\.?[0-9]*)', text)
+        r'Consumer\s*No\.?\s*[:\-]?\s*(\d+)',
 
-    if amount_match:
-        data["bill_amount"] = amount_match.group(1)
-    else:
-        data["bill_amount"] = "0"
+        r'Consumer\s*Number\s*[:\-]?\s*(\d+)',
 
-    # Units Consumed
-    units_match = re.search(r'\s(\d{1,4})\s0\s\d{1,4}', text)
+        r'Customer\s*No\.?\s*[:\-]?\s*(\d+)',
 
-    if units_match:
-        data["units_consumed"] = units_match.group(1)
-    else:
-        data["units_consumed"] = "0"
+        r'(\d{12})'
+    ]
 
-    # Sanctioned Load
-    load_match = re.search(r'(\d+\.\d+\s*KW)', text)
+    for pattern in consumer_patterns:
 
-    if load_match:
-        data["sanctioned_load"] = load_match.group(1)
-    else:
-        data["sanctioned_load"] = "0"
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+
+            data["consumer_number"] = match.group(1)
+
+            break
+
+    # =====================================
+    # BILL AMOUNT
+    # =====================================
+
+    amount_patterns = [
+
+        r'Current\s*Bill\s*Amount\s*[:\-]?\s*Rs\.?\s*([0-9,]+\.?[0-9]*)',
+
+        r'Bill\s*Amount\s*[:\-]?\s*Rs\.?\s*([0-9,]+\.?[0-9]*)',
+
+        r'Total\s*Amount\s*[:\-]?\s*Rs\.?\s*([0-9,]+\.?[0-9]*)',
+
+        r'Rs\.?\s*([0-9,]+\.?[0-9]*)'
+    ]
+
+    for pattern in amount_patterns:
+
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+
+            data["bill_amount"] = match.group(1)
+
+            break
+
+    # =====================================
+    # UNITS CONSUMED
+    # =====================================
+
+    unit_patterns = [
+
+        r'Units\s*Consumed\s*[:\-]?\s*(\d+)',
+
+        r'Consumption\s*[:\-]?\s*(\d+)',
+
+        r'(\d+)\s*Units'
+    ]
+
+    for pattern in unit_patterns:
+
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+
+            data["units_consumed"] = match.group(1)
+
+            break
+
+    # =====================================
+    # SANCTIONED LOAD
+    # =====================================
+
+    load_patterns = [
+
+        r'Sanctioned\s*Load\s*[:\-]?\s*([0-9.]+\s*KW)',
+
+        r'Load\s*[:\-]?\s*([0-9.]+\s*KW)',
+
+        r'([0-9.]+\s*KW)'
+    ]
+
+    for pattern in load_patterns:
+
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+
+            data["sanctioned_load"] = match.group(1)
+
+            break
 
     return data
 
@@ -115,48 +190,83 @@ def extract_bill_data(text):
 
 def fill_excel(data):
 
-    workbook = load_workbook("template.xlsx")
-
-    sheet = workbook.active
-
-    # Consumer Number
-    sheet["D2"] = data["consumer_number"]
-
-    # Sanctioned Load
-    sheet["D4"] = data["sanctioned_load"]
-
-    # Units
     try:
-        units = int(data["units_consumed"])
-    except:
-        units = 0
 
-    sheet["D20"] = units
+        if not os.path.exists("template.xlsx"):
 
-    # Bill Amount
-    try:
-        amount = float(
-            str(data["bill_amount"]).replace(",", "")
-        )
-    except:
-        amount = 0
+            st.error("template.xlsx file not found")
 
-    sheet["E20"] = amount
+            return None
 
-    # Unit Cost
-    if units > 0:
-        unit_cost = amount / units
-    else:
-        unit_cost = 0
+        workbook = load_workbook("template.xlsx")
 
-    sheet["F20"] = round(unit_cost, 2)
+        sheet = workbook.active
 
-    # SAVE FILE
-    output_file = "filled_output.xlsx"
+        # =====================================
+        # BASIC DETAILS
+        # =====================================
 
-    workbook.save(output_file)
+        sheet["D2"] = data["consumer_number"]
 
-    return output_file
+        sheet["D4"] = data["sanctioned_load"]
+
+        # =====================================
+        # BILL DATA
+        # =====================================
+
+        try:
+
+            units = int(
+                str(data["units_consumed"]).replace(",", "")
+            )
+
+        except:
+
+            units = 0
+
+        sheet["D20"] = units
+
+        try:
+
+            amount = float(
+                str(data["bill_amount"]).replace(",", "")
+            )
+
+        except:
+
+            amount = 0
+
+        sheet["E20"] = amount
+
+        # =====================================
+        # UNIT COST
+        # =====================================
+
+        if units > 0:
+
+            unit_cost = amount / units
+
+        else:
+
+            unit_cost = 0
+
+        sheet["F20"] = round(unit_cost, 2)
+
+        # =====================================
+        # SAVE FILE
+        # =====================================
+
+        output_file = "filled_output.xlsx"
+
+        workbook.save(output_file)
+
+        return output_file
+
+    except Exception as e:
+
+        st.error(f"Excel Error: {e}")
+
+        return None
 
 # =========================================
 # MAIN APP
@@ -164,34 +274,61 @@ def fill_excel(data):
 
 if uploaded_file:
 
-    st.success("File Uploaded Successfully")
+    st.success("✅ File Uploaded Successfully")
 
-    # PDF FILE
-    if uploaded_file.type == "application/pdf":
+    # =====================================
+    # EXTRACT PDF TEXT
+    # =====================================
 
-        extracted_text = extract_text_from_pdf(uploaded_file)
+    extracted_text = extract_text_from_pdf(uploaded_file)
 
-    # IMAGE FILE
+    # =====================================
+    # SHOW RAW TEXT
+    # =====================================
+
+    st.subheader("📄 Extracted Raw Text")
+
+    if extracted_text.strip():
+
+        st.text(extracted_text[:5000])
+
     else:
 
-        extracted_text = extract_text_from_image(uploaded_file)
+        st.error(
+            "❌ No readable text found in PDF.\n"
+            "Use original electricity bill PDF.\n"
+            "Scanned/WhatsApp PDFs may not work."
+        )
 
+    # =====================================
     # EXTRACT DATA
+    # =====================================
+
     bill_data = extract_bill_data(extracted_text)
 
-    st.subheader("Extracted Data")
-    st.write(bill_data)
+    st.subheader("📊 Extracted Data")
 
+    st.json(bill_data)
+
+    # =====================================
     # GENERATE EXCEL
+    # =====================================
+
     output_file = fill_excel(bill_data)
 
-    st.success("Excel File Generated Successfully")
-
+    # =====================================
     # DOWNLOAD BUTTON
-    with open(output_file, "rb") as file:
+    # =====================================
 
-        st.download_button(
-            label="Download Filled Excel",
-            data=file,
-            file_name="filled_output.xlsx"
-        )
+    if output_file:
+
+        st.success("✅ Excel File Generated Successfully")
+
+        with open(output_file, "rb") as file:
+
+            st.download_button(
+                label="⬇ Download Filled Excel",
+                data=file,
+                file_name="filled_output.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
