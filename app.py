@@ -1,334 +1,184 @@
-import streamlit as st
-import pdfplumber
-import re
 import os
-from openpyxl import load_workbook
+import re
+import pdfplumber
+import pandas as pd
 
-# =========================================
-# PAGE SETTINGS
-# =========================================
+from flask import Flask, request, jsonify, send_file
+from werkzeug.utils import secure_filename
 
-st.set_page_config(
-    page_title="Electricity Bill Automation",
-    page_icon="⚡",
-    layout="centered"
-)
+# =========================
+# CONFIG
+# =========================
 
-# =========================================
-# APP TITLE
-# =========================================
+UPLOAD_FOLDER = "uploads"
+EXCEL_FOLDER = "excel"
 
-st.title("⚡ Electricity Bill Automation")
-st.write("Upload Electricity Bill PDF and Generate Excel Automatically")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(EXCEL_FOLDER, exist_ok=True)
 
-# =========================================
-# FILE UPLOAD
-# =========================================
+app = Flask(__name__)
 
-uploaded_file = st.file_uploader(
-    "Upload Electricity Bill PDF",
-    type=["pdf"]
-)
-
-# =========================================
+# =========================
 # PDF TEXT EXTRACTION
-# =========================================
+# =========================
 
-def extract_text_from_pdf(pdf_file):
+def extract_text_from_pdf(pdf_path):
 
     text = ""
 
     try:
+        with pdfplumber.open(pdf_path) as pdf:
 
-        st.info("📄 Reading PDF...")
-
-        with pdfplumber.open(pdf_file) as pdf:
-
-            total_pages = len(pdf.pages)
-
-            st.write(f"Total Pages Found: {total_pages}")
-
-            # Process only first 3 pages
-            # Faster for Render free tier
-
-            max_pages = min(total_pages, 3)
-
-            for i in range(max_pages):
-
-                st.write(f"Processing Page {i+1}...")
-
-                page = pdf.pages[i]
+            for page in pdf.pages:
 
                 extracted = page.extract_text()
 
                 if extracted:
-
                     text += extracted + "\n"
 
-        st.success("✅ PDF Reading Completed")
-
     except Exception as e:
-
-        st.error(f"PDF Reading Error: {e}")
+        print("PDF Error:", e)
 
     return text
 
-# =========================================
-# BILL DATA EXTRACTION
-# =========================================
+# =========================
+# DATA EXTRACTION
+# =========================
 
 def extract_bill_data(text):
 
+    print("\n========== PDF TEXT ==========\n")
+    print(text)
+    print("\n==============================\n")
+
+    consumer_number = re.search(
+        r'(Consumer\s*(No|Number)|Customer\s*ID)\s*[:\-]?\s*(\d+)',
+        text,
+        re.IGNORECASE
+    )
+
+    bill_amount = re.search(
+        r'(Bill\s*Amount|Current\s*Bill|Total\s*Amount)\s*[:\-]?\s*₹?\s*([\d,]+\.\d+|[\d,]+)',
+        text,
+        re.IGNORECASE
+    )
+
+    units_consumed = re.search(
+        r'(Units\s*Consumed|Consumption|Units)\s*[:\-]?\s*(\d+)',
+        text,
+        re.IGNORECASE
+    )
+
+    sanctioned_load = re.search(
+        r'(Sanctioned\s*Load|Load)\s*[:\-]?\s*([\d.]+)',
+        text,
+        re.IGNORECASE
+    )
+
     data = {
-        "consumer_number": "0",
-        "bill_amount": "0",
-        "units_consumed": "0",
-        "sanctioned_load": "0"
+        "consumer_number": consumer_number.group(3) if consumer_number else "0",
+        "bill_amount": bill_amount.group(2) if bill_amount else "0",
+        "units_consumed": units_consumed.group(2) if units_consumed else "0",
+        "sanctioned_load": sanctioned_load.group(2) if sanctioned_load else "0"
     }
-
-    # =====================================
-    # CONSUMER NUMBER
-    # =====================================
-
-    consumer_patterns = [
-
-        r'Consumer\s*No\.?\s*[:\-]?\s*(\d+)',
-
-        r'Consumer\s*Number\s*[:\-]?\s*(\d+)',
-
-        r'Customer\s*No\.?\s*[:\-]?\s*(\d+)',
-
-        r'(\d{12})'
-    ]
-
-    for pattern in consumer_patterns:
-
-        match = re.search(pattern, text, re.IGNORECASE)
-
-        if match:
-
-            data["consumer_number"] = match.group(1)
-
-            break
-
-    # =====================================
-    # BILL AMOUNT
-    # =====================================
-
-    amount_patterns = [
-
-        r'Current\s*Bill\s*Amount\s*[:\-]?\s*Rs\.?\s*([0-9,]+\.?[0-9]*)',
-
-        r'Bill\s*Amount\s*[:\-]?\s*Rs\.?\s*([0-9,]+\.?[0-9]*)',
-
-        r'Total\s*Amount\s*[:\-]?\s*Rs\.?\s*([0-9,]+\.?[0-9]*)',
-
-        r'Rs\.?\s*([0-9,]+\.?[0-9]*)'
-    ]
-
-    for pattern in amount_patterns:
-
-        match = re.search(pattern, text, re.IGNORECASE)
-
-        if match:
-
-            data["bill_amount"] = match.group(1)
-
-            break
-
-    # =====================================
-    # UNITS CONSUMED
-    # =====================================
-
-    unit_patterns = [
-
-        r'Units\s*Consumed\s*[:\-]?\s*(\d+)',
-
-        r'Consumption\s*[:\-]?\s*(\d+)',
-
-        r'(\d+)\s*Units'
-    ]
-
-    for pattern in unit_patterns:
-
-        match = re.search(pattern, text, re.IGNORECASE)
-
-        if match:
-
-            data["units_consumed"] = match.group(1)
-
-            break
-
-    # =====================================
-    # SANCTIONED LOAD
-    # =====================================
-
-    load_patterns = [
-
-        r'Sanctioned\s*Load\s*[:\-]?\s*([0-9.]+\s*KW)',
-
-        r'Load\s*[:\-]?\s*([0-9.]+\s*KW)',
-
-        r'([0-9.]+\s*KW)'
-    ]
-
-    for pattern in load_patterns:
-
-        match = re.search(pattern, text, re.IGNORECASE)
-
-        if match:
-
-            data["sanctioned_load"] = match.group(1)
-
-            break
 
     return data
 
-# =========================================
-# EXCEL AUTO FILL
-# =========================================
+# =========================
+# EXCEL GENERATION
+# =========================
 
-def fill_excel(data):
+def create_excel(data, excel_path):
 
-    try:
+    df = pd.DataFrame([data])
 
-        if not os.path.exists("template.xlsx"):
+    df.to_excel(excel_path, index=False)
 
-            st.error("template.xlsx file not found")
+# =========================
+# HOME ROUTE
+# =========================
 
-            return None
+@app.route("/")
+def home():
 
-        workbook = load_workbook("template.xlsx")
+    return """
+    <h1>⚡ Electricity Bill Automation</h1>
 
-        sheet = workbook.active
+    <form action="/upload" method="POST" enctype="multipart/form-data">
 
-        # =====================================
-        # BASIC DETAILS
-        # =====================================
+        <input type="file" name="file" required>
 
-        sheet["D2"] = data["consumer_number"]
+        <button type="submit">Upload PDF</button>
 
-        sheet["D4"] = data["sanctioned_load"]
+    </form>
+    """
 
-        # =====================================
-        # BILL DATA
-        # =====================================
+# =========================
+# UPLOAD ROUTE
+# =========================
 
-        try:
+@app.route("/upload", methods=["POST"])
+def upload_file():
 
-            units = int(
-                str(data["units_consumed"]).replace(",", "")
-            )
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"})
 
-        except:
+    file = request.files["file"]
 
-            units = 0
+    if file.filename == "":
+        return jsonify({"error": "No selected file"})
 
-        sheet["D20"] = units
+    filename = secure_filename(file.filename)
 
-        try:
+    pdf_path = os.path.join(UPLOAD_FOLDER, filename)
 
-            amount = float(
-                str(data["bill_amount"]).replace(",", "")
-            )
+    file.save(pdf_path)
 
-        except:
+    # =========================
+    # EXTRACT TEXT
+    # =========================
 
-            amount = 0
+    text = extract_text_from_pdf(pdf_path)
 
-        sheet["E20"] = amount
-
-        # =====================================
-        # UNIT COST
-        # =====================================
-
-        if units > 0:
-
-            unit_cost = amount / units
-
-        else:
-
-            unit_cost = 0
-
-        sheet["F20"] = round(unit_cost, 2)
-
-        # =====================================
-        # SAVE FILE
-        # =====================================
-
-        output_file = "filled_output.xlsx"
-
-        workbook.save(output_file)
-
-        return output_file
-
-    except Exception as e:
-
-        st.error(f"Excel Error: {e}")
-
-        return None
-
-# =========================================
-# MAIN APP
-# =========================================
-
-if uploaded_file:
-
-    st.success("✅ File Uploaded Successfully")
-
-    # =====================================
-    # EXTRACT PDF TEXT
-    # =====================================
-
-    extracted_text = extract_text_from_pdf(uploaded_file)
-
-    # =====================================
-    # SHOW RAW TEXT
-    # =====================================
-
-    st.subheader("📄 Extracted Raw Text")
-
-    if extracted_text.strip():
-
-        st.text(extracted_text[:5000])
-
-    else:
-
-        st.error(
-            "❌ No readable text found in PDF.\n"
-            "Use original electricity bill PDF.\n"
-            "Scanned/WhatsApp PDFs may not work."
-        )
-
-    # =====================================
+    # =========================
     # EXTRACT DATA
-    # =====================================
+    # =========================
 
-    bill_data = extract_bill_data(extracted_text)
+    extracted_data = extract_bill_data(text)
 
-    st.subheader("📊 Extracted Data")
+    # =========================
+    # CREATE EXCEL
+    # =========================
 
-    st.json(bill_data)
+    excel_filename = filename.replace(".pdf", ".xlsx")
 
-    # =====================================
-    # GENERATE EXCEL
-    # =====================================
+    excel_path = os.path.join(EXCEL_FOLDER, excel_filename)
 
-    output_file = fill_excel(bill_data)
+    create_excel(extracted_data, excel_path)
 
-    # =====================================
-    # DOWNLOAD BUTTON
-    # =====================================
+    return jsonify({
+        "message": "File Uploaded Successfully",
+        "extracted_data": extracted_data,
+        "excel_download": f"/download/{excel_filename}"
+    })
 
-    if output_file:
+# =========================
+# DOWNLOAD EXCEL
+# =========================
 
-        st.success("✅ Excel File Generated Successfully")
+@app.route("/download/<filename>")
+def download_excel(filename):
 
-        with open(output_file, "rb") as file:
+    file_path = os.path.join(EXCEL_FOLDER, filename)
 
-            st.download_button(
-                label="⬇ Download Filled Excel",
-                data=file,
-                file_name="filled_output.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    return send_file(
+        file_path,
+        as_attachment=True
+    )
+
+# =========================
+# MAIN
+# =========================
+
+if __name__ == "__main__":
+    app.run(debug=True)
