@@ -4,6 +4,7 @@ from PIL import Image
 import pytesseract
 import os
 import re
+import platform
 from openpyxl import load_workbook
 
 # =========================================
@@ -17,301 +18,292 @@ st.set_page_config(
 )
 
 # =========================================
-# CUSTOM UI
+# CUSTOM CSS
 # =========================================
 
 st.markdown("""
 <style>
 
-.main {
-    background-color: #f4f7fb;
+.stApp {
+    background-color: #0e1117;
+    color: white;
 }
 
-.title {
+.main-title {
     text-align:center;
-    color:#1f4e79;
     font-size:42px;
     font-weight:bold;
+    color:white;
     margin-bottom:10px;
 }
 
-.subtitle{
+.sub-title {
     text-align:center;
-    color:gray;
+    color:#b0b0b0;
     margin-bottom:30px;
 }
 
-.card {
-    background:white;
-    padding:30px;
-    border-radius:18px;
-    box-shadow:0 0 20px rgba(0,0,0,0.08);
+.result-box{
+    background:#1c1f26;
+    padding:20px;
+    border-radius:12px;
+    border:1px solid #2e3440;
+    margin-top:20px;
 }
 
 .stButton>button {
-    background:#1f4e79;
+    background:#1f77ff;
     color:white;
     border:none;
-    padding:12px 20px;
     border-radius:10px;
-    width:100%;
-    font-size:16px;
+    padding:10px 20px;
     font-weight:bold;
 }
 
-.stDownloadButton>button{
-    background:#198754;
+.stDownloadButton>button {
+    background:#00b894;
     color:white;
     border:none;
-    padding:12px 20px;
     border-radius:10px;
-    width:100%;
-    font-size:16px;
+    padding:10px 20px;
     font-weight:bold;
-}
-
-.result-box{
-    background:#f8f9fa;
-    padding:15px;
-    border-radius:10px;
-    margin-top:15px;
-    border-left:5px solid #1f4e79;
+    width:100%;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================
-# TESSERACT CONFIG
+# WINDOWS OCR SETUP
 # =========================================
 
-# LOCAL WINDOWS
-# Uncomment locally only
+if platform.system() == "Windows":
 
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+    os.environ["TESSDATA_PREFIX"] = r"C:\Program Files\Tesseract-OCR\tessdata"
 
 # =========================================
 # TITLE
 # =========================================
 
 st.markdown(
-    '<div class="title">⚡ Electricity Bill Automation</div>',
+    '<div class="main-title">⚡ Electricity Bill Automation</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
-    '<div class="subtitle">Upload electricity bill PDF or image and generate Excel automatically</div>',
+    '<div class="sub-title">Upload electricity bill PDF or image and generate Excel automatically</div>',
     unsafe_allow_html=True
 )
 
 # =========================================
-# MAIN CARD
+# FILE UPLOAD
 # =========================================
 
-with st.container():
+uploaded_file = st.file_uploader(
+    "Upload Electricity Bill",
+    type=["pdf", "png", "jpg", "jpeg"]
+)
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
+# =========================================
+# PDF TEXT EXTRACTION
+# =========================================
 
-    uploaded_file = st.file_uploader(
-        "Upload Electricity Bill",
-        type=["pdf", "png", "jpg", "jpeg"]
-    )
+def extract_text_from_pdf(pdf_file):
 
-    # =========================================
-    # PDF TEXT EXTRACTION
-    # =========================================
+    text = ""
 
-    def extract_text_from_pdf(pdf_file):
+    try:
 
-        text = ""
+        with pdfplumber.open(pdf_file) as pdf:
 
-        try:
+            for page in pdf.pages:
 
-            with pdfplumber.open(pdf_file) as pdf:
+                extracted = page.extract_text()
 
-                for page in pdf.pages:
+                if extracted:
+                    text += extracted + "\n"
 
-                    extracted = page.extract_text()
+    except Exception as e:
 
-                    if extracted:
-                        text += extracted + "\n"
+        st.error(f"PDF Error: {e}")
 
-        except Exception as e:
+    return text
 
-            st.error(f"PDF Error: {e}")
+# =========================================
+# IMAGE OCR
+# =========================================
 
-        return text
+def extract_text_from_image(image_file):
 
-    # =========================================
-    # IMAGE OCR
-    # =========================================
+    image = Image.open(image_file)
 
-    def extract_text_from_image(image_file):
+    text = pytesseract.image_to_string(image)
 
-        image = Image.open(image_file)
+    return text
 
-        text = pytesseract.image_to_string(image)
+# =========================================
+# BILL DATA EXTRACTION
+# =========================================
 
-        return text
+def extract_bill_data(text):
 
-    # =========================================
-    # BILL DATA EXTRACTION
-    # =========================================
+    data = {}
 
-    def extract_bill_data(text):
+    patterns = {
 
-        data = {}
+        "consumer_number": [
+            r"Consumer\s*No\.?\s*[:\-]?\s*(\d+)",
+            r"Customer\s*ID\s*[:\-]?\s*(\d+)",
+            r"(\d{12})"
+        ],
 
-        patterns = {
+        "bill_amount": [
+            r"Bill\s*Amount\s*[:\-]?\s*₹?\s*([\d,.]+)",
+            r"Current\s*Bill\s*[:\-]?\s*₹?\s*([\d,.]+)",
+            r"Total\s*Amount\s*[:\-]?\s*₹?\s*([\d,.]+)",
+            r"Rs[,.\s]*([0-9,]+\.?[0-9]*)"
+        ],
 
-            "consumer_number": [
-                r"Consumer\s*No\.?\s*[:\-]?\s*(\d+)",
-                r"Customer\s*ID\s*[:\-]?\s*(\d+)",
-                r"(\d{12})"
-            ],
+        "units_consumed": [
+            r"Units\s*Consumed\s*[:\-]?\s*(\d+)",
+            r"Consumption\s*[:\-]?\s*(\d+)"
+        ],
 
-            "bill_amount": [
-                r"Bill\s*Amount\s*[:\-]?\s*₹?\s*([\d,.]+)",
-                r"Current\s*Bill\s*[:\-]?\s*₹?\s*([\d,.]+)",
-                r"Total\s*Amount\s*[:\-]?\s*₹?\s*([\d,.]+)",
-                r"Rs[,.\s]*([0-9,]+\.?[0-9]*)"
-            ],
+        "sanctioned_load": [
+            r"Sanctioned\s*Load\s*[:\-]?\s*([\d.]+)",
+            r"Load\s*[:\-]?\s*([\d.]+)",
+            r"(\d+\.\d+\s*KW)"
+        ]
+    }
 
-            "units_consumed": [
-                r"Units\s*Consumed\s*[:\-]?\s*(\d+)",
-                r"Consumption\s*[:\-]?\s*(\d+)",
-                r"\s(\d{1,4})\s0\s\d{1,4}"
-            ],
+    for key, regex_list in patterns.items():
 
-            "sanctioned_load": [
-                r"Sanctioned\s*Load\s*[:\-]?\s*([\d.]+)",
-                r"Load\s*[:\-]?\s*([\d.]+)",
-                r"(\d+\.\d+\s*KW)"
-            ]
-        }
+        value = "0"
 
-        for key, regex_list in patterns.items():
+        for pattern in regex_list:
 
-            value = "0"
+            match = re.search(pattern, text, re.IGNORECASE)
 
-            for pattern in regex_list:
+            if match:
+                value = match.group(1)
+                break
 
-                match = re.search(pattern, text, re.IGNORECASE)
+        data[key] = value
 
-                if match:
-                    value = match.group(1)
-                    break
+    return data
 
-            data[key] = value
+# =========================================
+# FILL EXCEL
+# =========================================
 
-        return data
+def fill_excel(data):
 
-    # =========================================
-    # FILL EXCEL
-    # =========================================
+    workbook = load_workbook("template.xlsx")
 
-    def fill_excel(data):
+    sheet = workbook.active
 
-        workbook = load_workbook("template.xlsx")
+    # Consumer Number
+    sheet["D2"] = data["consumer_number"]
 
-        sheet = workbook.active
+    # Load
+    sheet["D4"] = data["sanctioned_load"]
 
-        # Consumer Number
-        sheet["D2"] = data["consumer_number"]
+    # Units
+    try:
 
-        # Load
-        sheet["D4"] = data["sanctioned_load"]
-
-        # Units
-        try:
-            units = int(
-                str(data["units_consumed"]).replace(",", "")
-            )
-        except:
-            units = 0
-
-        sheet["D20"] = units
-
-        # Bill Amount
-        try:
-            amount = float(
-                str(data["bill_amount"]).replace(",", "")
-            )
-        except:
-            amount = 0
-
-        sheet["E20"] = amount
-
-        # Unit Cost
-        if units > 0:
-            unit_cost = amount / units
-        else:
-            unit_cost = 0
-
-        sheet["F20"] = round(unit_cost, 2)
-
-        # Output
-        output_file = "filled_output.xlsx"
-
-        workbook.save(output_file)
-
-        return output_file
-
-    # =========================================
-    # MAIN PROCESS
-    # =========================================
-
-    if uploaded_file:
-
-        st.success("✅ File Uploaded Successfully")
-
-        extracted_text = ""
-
-        # PDF
-        if uploaded_file.type == "application/pdf":
-
-            extracted_text = extract_text_from_pdf(uploaded_file)
-
-        # IMAGE
-        else:
-
-            extracted_text = extract_text_from_image(uploaded_file)
-
-        # DEBUG TEXT
-        with st.expander("View Extracted Text"):
-
-            st.text(extracted_text)
-
-        # Extract Data
-        bill_data = extract_bill_data(extracted_text)
-
-        # Results UI
-        st.markdown(
-            '<div class="result-box">',
-            unsafe_allow_html=True
+        units = int(
+            str(data["units_consumed"]).replace(",", "")
         )
 
-        st.subheader("📊 Extracted Bill Data")
+    except:
 
-        st.write(f"**Consumer Number:** {bill_data['consumer_number']}")
-        st.write(f"**Bill Amount:** ₹ {bill_data['bill_amount']}")
-        st.write(f"**Units Consumed:** {bill_data['units_consumed']}")
-        st.write(f"**Sanctioned Load:** {bill_data['sanctioned_load']}")
+        units = 0
 
-        st.markdown('</div>', unsafe_allow_html=True)
+    sheet["D20"] = units
 
-        # Generate Excel
-        output_file = fill_excel(bill_data)
+    # Bill Amount
+    try:
 
-        st.success("✅ Excel File Generated Successfully")
+        amount = float(
+            str(data["bill_amount"]).replace(",", "")
+        )
 
-        # Download Button
-        with open(output_file, "rb") as file:
+    except:
 
-            st.download_button(
-                label="⬇ Download Filled Excel",
-                data=file,
-                file_name="filled_output.xlsx"
-            )
+        amount = 0
+
+    sheet["E20"] = amount
+
+    # Unit Cost
+    if units > 0:
+
+        unit_cost = amount / units
+
+    else:
+
+        unit_cost = 0
+
+    sheet["F20"] = round(unit_cost, 2)
+
+    # Save Output
+    output_file = "filled_output.xlsx"
+
+    workbook.save(output_file)
+
+    return output_file
+
+# =========================================
+# MAIN PROCESS
+# =========================================
+
+if uploaded_file:
+
+    st.success("✅ File Uploaded Successfully")
+
+    extracted_text = ""
+
+    # PDF
+    if uploaded_file.type == "application/pdf":
+
+        extracted_text = extract_text_from_pdf(uploaded_file)
+
+    # IMAGE
+    else:
+
+        extracted_text = extract_text_from_image(uploaded_file)
+
+    # VIEW TEXT
+    with st.expander("View Extracted Text"):
+
+        st.text(extracted_text)
+
+    # EXTRACT DATA
+    bill_data = extract_bill_data(extracted_text)
+
+    # RESULT BOX
+    st.markdown('<div class="result-box">', unsafe_allow_html=True)
+
+    st.subheader("📊 Extracted Bill Data")
+
+    st.write(f"**Consumer Number:** {bill_data['consumer_number']}")
+    st.write(f"**Bill Amount:** ₹ {bill_data['bill_amount']}")
+    st.write(f"**Units Consumed:** {bill_data['units_consumed']}")
+    st.write(f"**Sanctioned Load:** {bill_data['sanctioned_load']}")
 
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # GENERATE EXCEL
+    output_file = fill_excel(bill_data)
+
+    st.success("✅ Excel File Generated Successfully")
+
+    # DOWNLOAD BUTTON
+    with open(output_file, "rb") as file:
+
+        st.download_button(
+            label="⬇ Download Filled Excel",
+            data=file,
+            file_name="filled_output.xlsx"
+        )
