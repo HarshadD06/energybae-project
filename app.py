@@ -10,9 +10,16 @@ from openpyxl import load_workbook
 # TESSERACT SETTINGS
 # =========================================
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Windows Local System Support
+if os.name == "nt":
 
-os.environ["TESSDATA_PREFIX"] = r"C:\Program Files\Tesseract-OCR\tessdata"
+    pytesseract.pytesseract.tesseract_cmd = (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    )
+
+    os.environ["TESSDATA_PREFIX"] = (
+        r"C:\Program Files\Tesseract-OCR\tessdata"
+    )
 
 # =========================================
 # APP TITLE
@@ -112,29 +119,27 @@ def fill_excel(data):
 
     sheet = workbook.active
 
-    # =====================================
-    # BASIC DETAILS
-    # =====================================
-
     # Consumer Number
     sheet["D2"] = data["consumer_number"]
 
     # Sanctioned Load
     sheet["D4"] = data["sanctioned_load"]
 
-    # =====================================
-    # JANUARY 2026 DATA
-    # =====================================
-
     # Units
-    units = int(data["units_consumed"])
+    try:
+        units = int(data["units_consumed"])
+    except:
+        units = 0
 
     sheet["D20"] = units
 
     # Bill Amount
-    amount = float(
-        str(data["bill_amount"]).replace(",", "")
-    )
+    try:
+        amount = float(
+            str(data["bill_amount"]).replace(",", "")
+        )
+    except:
+        amount = 0
 
     sheet["E20"] = amount
 
@@ -146,10 +151,7 @@ def fill_excel(data):
 
     sheet["F20"] = round(unit_cost, 2)
 
-    # =====================================
     # SAVE FILE
-    # =====================================
-
     output_file = "filled_output.xlsx"
 
     workbook.save(output_file)
@@ -176,6 +178,9 @@ if uploaded_file:
 
     # EXTRACT DATA
     bill_data = extract_bill_data(extracted_text)
+
+    st.subheader("Extracted Data")
+    st.write(bill_data)
 
     # GENERATE EXCEL
     output_file = fill_excel(bill_data)
