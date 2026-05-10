@@ -1,6 +1,6 @@
-flask
-gunicorn
+streamlit
 pdfplumber
 pandas
 openpyxl
 pillow
+pytesseract
