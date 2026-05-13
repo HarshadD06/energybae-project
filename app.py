@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 # =========================================
 
 st.set_page_config(
-    page_title="Electricity Bill Automation",
+    page_title="Solar Load Calculator",
     page_icon="⚡",
     layout="centered"
 )
@@ -51,21 +51,12 @@ st.markdown("""
     margin-top:20px;
 }
 
-.stButton>button {
-    background:#1f77ff;
-    color:white;
-    border:none;
-    border-radius:10px;
-    padding:10px 20px;
-    font-weight:bold;
-}
-
-.stDownloadButton>button {
+.stDownloadButton>button{
     background:#00b894;
     color:white;
     border:none;
     border-radius:10px;
-    padding:10px 20px;
+    padding:12px;
     font-weight:bold;
     width:100%;
 }
@@ -88,12 +79,12 @@ if platform.system() == "Windows":
 # =========================================
 
 st.markdown(
-    '<div class="main-title">⚡ Electricity Bill Automation</div>',
+    '<div class="main-title">⚡ Solar Load Calculator</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
-    '<div class="sub-title">Upload electricity bill PDF or image and generate Excel automatically</div>',
+    '<div class="sub-title">Upload electricity bill and generate solar recommendation automatically</div>',
     unsafe_allow_html=True
 )
 
@@ -137,14 +128,20 @@ def extract_text_from_pdf(pdf_file):
 
 def extract_text_from_image(image_file):
 
-    image = Image.open(image_file)
+    try:
 
-    text = pytesseract.image_to_string(image)
+        image = Image.open(image_file)
 
-    return text
+        text = pytesseract.image_to_string(image)
+
+        return text
+
+    except Exception:
+
+        return ""
 
 # =========================================
-# BILL DATA EXTRACTION
+# DATA EXTRACTION
 # =========================================
 
 def extract_bill_data(text):
@@ -195,7 +192,7 @@ def extract_bill_data(text):
     return data
 
 # =========================================
-# FILL EXCEL
+# EXCEL GENERATION
 # =========================================
 
 def fill_excel(data):
@@ -204,13 +201,17 @@ def fill_excel(data):
 
     sheet = workbook.active
 
-    # Consumer Number
-    sheet["D2"] = data["consumer_number"]
+    # =================================
+    # BASIC DATA
+    # =================================
 
-    # Load
+    sheet["D2"] = data["consumer_number"]
     sheet["D4"] = data["sanctioned_load"]
 
-    # Units
+    # =================================
+    # UNITS
+    # =================================
+
     try:
 
         units = int(
@@ -221,9 +222,10 @@ def fill_excel(data):
 
         units = 0
 
-    sheet["D20"] = units
+    # =================================
+    # BILL AMOUNT
+    # =================================
 
-    # Bill Amount
     try:
 
         amount = float(
@@ -234,9 +236,17 @@ def fill_excel(data):
 
         amount = 0
 
-    sheet["E20"] = amount
+    # =================================
+    # CURRENT MONTH DATA
+    # =================================
 
-    # Unit Cost
+    sheet["C20"] = units
+    sheet["D20"] = amount
+
+    # =================================
+    # UNIT COST
+    # =================================
+
     if units > 0:
 
         unit_cost = amount / units
@@ -245,9 +255,35 @@ def fill_excel(data):
 
         unit_cost = 0
 
-    sheet["F20"] = round(unit_cost, 2)
+    sheet["E20"] = round(unit_cost, 2)
 
-    # Save Output
+    # =================================
+    # SOLAR CALCULATION
+    # =================================
+
+    average_units = units
+
+    # 1 KW ≈ 120 units
+    solar_kw = average_units / 120
+
+    solar_panels = solar_kw / 0.55
+
+    solar_capacity = round(solar_kw)
+
+    # =================================
+    # FILL SOLAR DETAILS
+    # =================================
+
+    sheet["C22"] = average_units
+    sheet["C23"] = round(solar_kw, 2)
+    sheet["C24"] = round(solar_panels, 2)
+    sheet["C25"] = solar_capacity
+    sheet["C26"] = round(solar_panels)
+
+    # =================================
+    # SAVE OUTPUT
+    # =================================
+
     output_file = "filled_output.xlsx"
 
     workbook.save(output_file)
@@ -274,15 +310,15 @@ if uploaded_file:
 
         extracted_text = extract_text_from_image(uploaded_file)
 
-    # VIEW TEXT
+    # SHOW EXTRACTED TEXT
     with st.expander("View Extracted Text"):
 
         st.text(extracted_text)
 
-    # EXTRACT DATA
+    # EXTRACT BILL DATA
     bill_data = extract_bill_data(extracted_text)
 
-    # RESULT BOX
+    # RESULT UI
     st.markdown('<div class="result-box">', unsafe_allow_html=True)
 
     st.subheader("📊 Extracted Bill Data")
@@ -291,6 +327,29 @@ if uploaded_file:
     st.write(f"**Bill Amount:** ₹ {bill_data['bill_amount']}")
     st.write(f"**Units Consumed:** {bill_data['units_consumed']}")
     st.write(f"**Sanctioned Load:** {bill_data['sanctioned_load']}")
+
+    # SOLAR RESULTS
+    try:
+
+        units = int(
+            str(bill_data["units_consumed"]).replace(",", "")
+        )
+
+    except:
+
+        units = 0
+
+    solar_kw = round(units / 120, 2)
+
+    monthly_savings = round(units * 8, 2)
+
+    annual_savings = round(monthly_savings * 12, 2)
+
+    st.subheader("☀ Solar Recommendation")
+
+    st.write(f"**Recommended Solar Capacity:** {solar_kw} kW")
+    st.write(f"**Estimated Monthly Savings:** ₹ {monthly_savings}")
+    st.write(f"**Estimated Annual Savings:** ₹ {annual_savings}")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
