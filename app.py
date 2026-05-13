@@ -6,6 +6,7 @@ import os
 import re
 import platform
 from openpyxl import load_workbook
+from pdf2image import convert_from_bytes
 
 # =========================================
 # PAGE CONFIG
@@ -123,6 +124,28 @@ def extract_text_from_pdf(pdf_file):
     return text
 
 # =========================================
+# OCR FOR SCANNED PDF
+# =========================================
+
+def extract_text_using_ocr(pdf_file):
+
+    text = ""
+
+    try:
+
+        images = convert_from_bytes(pdf_file.read())
+
+        for image in images:
+
+            text += pytesseract.image_to_string(image)
+
+    except Exception as e:
+
+        st.error(f"OCR Error: {e}")
+
+    return text
+
+# =========================================
 # IMAGE OCR
 # =========================================
 
@@ -136,58 +159,70 @@ def extract_text_from_image(image_file):
 
         return text
 
-    except Exception:
+    except:
 
         return ""
 
 # =========================================
-# DATA EXTRACTION
+# BILL DATA EXTRACTION
 # =========================================
 
 def extract_bill_data(text):
 
     data = {}
 
-    patterns = {
+    text = text.replace("\n", " ")
 
-        "consumer_number": [
-            r"Consumer\s*No\.?\s*[:\-]?\s*(\d+)",
-            r"Customer\s*ID\s*[:\-]?\s*(\d+)",
-            r"(\d{12})"
-        ],
+    # Consumer Number
+    consumer_patterns = [
+        r'Consumer\s*No\.?\s*[:\-]?\s*(\d+)',
+        r'Customer\s*ID\s*[:\-]?\s*(\d+)',
+        r'(\d{12})'
+    ]
 
-        "bill_amount": [
-            r"Bill\s*Amount\s*[:\-]?\s*₹?\s*([\d,.]+)",
-            r"Current\s*Bill\s*[:\-]?\s*₹?\s*([\d,.]+)",
-            r"Total\s*Amount\s*[:\-]?\s*₹?\s*([\d,.]+)",
-            r"Rs[,.\s]*([0-9,]+\.?[0-9]*)"
-        ],
+    # Bill Amount
+    amount_patterns = [
+        r'Bill\s*Amount\s*[:\-]?\s*₹?\s*([\d,]+\.?\d*)',
+        r'Current\s*Bill\s*[:\-]?\s*₹?\s*([\d,]+\.?\d*)',
+        r'Amount\s*Due\s*[:\-]?\s*₹?\s*([\d,]+\.?\d*)',
+        r'Rs\.?\s*([\d,]+\.?\d*)'
+    ]
 
-        "units_consumed": [
-            r"Units\s*Consumed\s*[:\-]?\s*(\d+)",
-            r"Consumption\s*[:\-]?\s*(\d+)"
-        ],
+    # Units
+    unit_patterns = [
+        r'Units\s*Consumed\s*[:\-]?\s*(\d+)',
+        r'Consumption\s*[:\-]?\s*(\d+)',
+        r'Total\s*Consumption\s*[:\-]?\s*(\d+)',
+        r'(\d+)\s*kWh'
+    ]
 
-        "sanctioned_load": [
-            r"Sanctioned\s*Load\s*[:\-]?\s*([\d.]+)",
-            r"Load\s*[:\-]?\s*([\d.]+)",
-            r"(\d+\.\d+\s*KW)"
-        ]
-    }
+    # Load
+    load_patterns = [
+        r'Sanctioned\s*Load\s*[:\-]?\s*([\d.]+)',
+        r'Load\s*[:\-]?\s*([\d.]+)',
+        r'([\d.]+)\s*KW'
+    ]
 
-    for key, regex_list in patterns.items():
+    # MATCH FUNCTION
+    def find_match(patterns):
 
-        value = "0"
+        for pattern in patterns:
 
-        for pattern in regex_list:
-
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(
+                pattern,
+                text,
+                re.IGNORECASE
+            )
 
             if match:
-                value = match.group(1)
-                break
+                return match.group(1)
 
-        data[key] = value
+        return "0"
+
+    data["consumer_number"] = find_match(consumer_patterns)
+    data["bill_amount"] = find_match(amount_patterns)
+    data["units_consumed"] = find_match(unit_patterns)
+    data["sanctioned_load"] = find_match(load_patterns)
 
     return data
 
@@ -201,17 +236,11 @@ def fill_excel(data):
 
     sheet = workbook.active
 
-    # =================================
-    # BASIC DATA
-    # =================================
-
+    # Basic
     sheet["D2"] = data["consumer_number"]
     sheet["D4"] = data["sanctioned_load"]
 
-    # =================================
-    # UNITS
-    # =================================
-
+    # Units
     try:
 
         units = int(
@@ -222,10 +251,7 @@ def fill_excel(data):
 
         units = 0
 
-    # =================================
-    # BILL AMOUNT
-    # =================================
-
+    # Amount
     try:
 
         amount = float(
@@ -236,17 +262,7 @@ def fill_excel(data):
 
         amount = 0
 
-    # =================================
-    # CURRENT MONTH DATA
-    # =================================
-
-    sheet["C20"] = units
-    sheet["D20"] = amount
-
-    # =================================
-    # UNIT COST
-    # =================================
-
+    # Unit Cost
     if units > 0:
 
         unit_cost = amount / units
@@ -255,24 +271,19 @@ def fill_excel(data):
 
         unit_cost = 0
 
-    sheet["E20"] = round(unit_cost, 2)
-
-    # =================================
-    # SOLAR CALCULATION
-    # =================================
-
+    # Solar Logic
     average_units = units
 
-    # 1 KW ≈ 120 units
     solar_kw = average_units / 120
 
     solar_panels = solar_kw / 0.55
 
     solar_capacity = round(solar_kw)
 
-    # =================================
-    # FILL SOLAR DETAILS
-    # =================================
+    # Fill Sheet
+    sheet["C20"] = units
+    sheet["D20"] = amount
+    sheet["E20"] = round(unit_cost, 2)
 
     sheet["C22"] = average_units
     sheet["C23"] = round(solar_kw, 2)
@@ -280,10 +291,7 @@ def fill_excel(data):
     sheet["C25"] = solar_capacity
     sheet["C26"] = round(solar_panels)
 
-    # =================================
-    # SAVE OUTPUT
-    # =================================
-
+    # Save
     output_file = "filled_output.xlsx"
 
     workbook.save(output_file)
@@ -300,25 +308,49 @@ if uploaded_file:
 
     extracted_text = ""
 
+    # =========================================
     # PDF
+    # =========================================
+
     if uploaded_file.type == "application/pdf":
 
         extracted_text = extract_text_from_pdf(uploaded_file)
 
+        # OCR FALLBACK
+        if len(extracted_text.strip()) < 20:
+
+            st.warning("Scanned PDF detected. Using OCR...")
+
+            uploaded_file.seek(0)
+
+            extracted_text = extract_text_using_ocr(uploaded_file)
+
+    # =========================================
     # IMAGE
+    # =========================================
+
     else:
 
         extracted_text = extract_text_from_image(uploaded_file)
 
-    # SHOW EXTRACTED TEXT
+    # =========================================
+    # SHOW TEXT
+    # =========================================
+
     with st.expander("View Extracted Text"):
 
         st.text(extracted_text)
 
-    # EXTRACT BILL DATA
+    # =========================================
+    # EXTRACT DATA
+    # =========================================
+
     bill_data = extract_bill_data(extracted_text)
 
-    # RESULT UI
+    # =========================================
+    # UI RESULTS
+    # =========================================
+
     st.markdown('<div class="result-box">', unsafe_allow_html=True)
 
     st.subheader("📊 Extracted Bill Data")
@@ -328,7 +360,7 @@ if uploaded_file:
     st.write(f"**Units Consumed:** {bill_data['units_consumed']}")
     st.write(f"**Sanctioned Load:** {bill_data['sanctioned_load']}")
 
-    # SOLAR RESULTS
+    # Solar Recommendation
     try:
 
         units = int(
@@ -353,12 +385,15 @@ if uploaded_file:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # =========================================
     # GENERATE EXCEL
+    # =========================================
+
     output_file = fill_excel(bill_data)
 
     st.success("✅ Excel File Generated Successfully")
 
-    # DOWNLOAD BUTTON
+    # Download
     with open(output_file, "rb") as file:
 
         st.download_button(
