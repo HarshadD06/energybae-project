@@ -206,57 +206,101 @@ def fill_excel(data):
     sheet = workbook.active
 
     # =========================================
-    # VALUES
+    # SAFE VALUES
+    # =========================================
+
+    consumer_number = str(
+        data.get("consumer_number", "N/A")
+    ).strip()
+
+    sanctioned_load = str(
+        data.get("sanctioned_load", "0")
+    ).strip()
+
+    # =========================================
+    # SAFE UNITS
     # =========================================
 
     try:
+
         units = int(
-            str(data["units_consumed"]).replace(",", "")
+            str(
+                data.get("units_consumed", "1")
+            ).replace(",", "").strip()
         )
+
+        if units <= 0:
+            units = 1
+
     except:
-        units = 0
+
+        units = 1
+
+    # =========================================
+    # SAFE BILL AMOUNT
+    # =========================================
 
     try:
+
         amount = float(
-            str(data["bill_amount"]).replace(",", "")
+            str(
+                data.get("bill_amount", "1")
+            ).replace(",", "").strip()
         )
+
+        if amount <= 0:
+            amount = 1
+
     except:
-        amount = 0
+
+        amount = 1
 
     # =========================================
-    # CALCULATIONS
+    # UNIT COST
     # =========================================
 
-    if units > 0:
-        unit_cost = amount / units
-    else:
-        unit_cost = 0
-
-    solar_kw = units / 120
-
-    solar_panels = solar_kw / 0.55
-
-    solar_capacity = round(solar_kw)
+    unit_cost = round(amount / units, 2)
 
     # =========================================
     # FILL EXCEL
     # =========================================
 
-    sheet["D2"] = data["consumer_number"]
-    sheet["D4"] = data["sanctioned_load"]
+    sheet["D2"] = consumer_number
+    sheet["D4"] = sanctioned_load
 
+    # Current Month Data
     sheet["C20"] = units
     sheet["D20"] = amount
-    sheet["E20"] = round(unit_cost, 2)
+    sheet["E20"] = unit_cost
 
+    # Average Section
     sheet["C22"] = units
-    sheet["C23"] = round(solar_kw, 2)
-    sheet["C24"] = round(solar_panels, 2)
+    sheet["D22"] = amount
+    sheet["E22"] = unit_cost
+
+    # Solar Values
+    solar_kw = round(units / 120, 2)
+
+    solar_panels = round(solar_kw / 0.55, 2)
+
+    solar_capacity = round(solar_kw)
+
+    number_of_panels = round(solar_panels)
+
+    sheet["C23"] = solar_kw
+    sheet["C24"] = solar_panels
     sheet["C25"] = solar_capacity
-    sheet["C26"] = round(solar_panels)
+    sheet["C26"] = number_of_panels
+
+    # Total Section
+    sheet["B30"] = "Total solar capacity"
+    sheet["C30"] = solar_capacity
+
+    sheet["B31"] = "Number of solar panels"
+    sheet["C31"] = number_of_panels
 
     # =========================================
-    # SAVE
+    # SAVE FILE
     # =========================================
 
     output_file = "filled_output.xlsx"
@@ -349,22 +393,30 @@ if uploaded_file:
     bill_data["sanctioned_load"] = sanctioned_load
 
     # =========================================
-    # CALCULATIONS
+    # SAFE CALCULATIONS
     # =========================================
 
     try:
         units = int(
             str(units_consumed).replace(",", "")
         )
+
+        if units <= 0:
+            units = 1
+
     except:
-        units = 0
+        units = 1
 
     try:
         amount = float(
             str(bill_amount).replace(",", "")
         )
+
+        if amount <= 0:
+            amount = 1
+
     except:
-        amount = 0
+        amount = 1
 
     solar_kw = round(units / 120, 2)
 
